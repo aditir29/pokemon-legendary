@@ -1,0 +1,446 @@
+---
+title: "Pokemon Analysis and Prediction"
+author: "Aditi Ramadurgakar"
+output:
+  github_document
+    #code_folding: show
+    #toc: true
+    #toc_float: true
+    #toc_collapsed: true
+    #toc_depth: 3
+---
+
+```{r setup, include=FALSE, collapse = TRUE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# Importing Libraries
+# Manipulation and modeling packages
+library(data.table)
+library(dplyr)
+library(tidyverse)
+library(caret)
+library(reshape2)
+library(ROCR)
+
+# Visualization packages
+library(ggplot2)
+library(plotly)
+library(DT)
+library(plotly)
+library(gridExtra)
+library(ggcorrplot)
+library(randomForest)
+
+# Importing dataset
+
+pokedex <- read.csv("pokemon_data_science.csv")
+
+# attributes
+stat_name <- names(pokedex)[5:11]
+```
+
+````{r theme setting, echo=FALSE}
+# colors for 
+theme_colors <- c("#FF8EC8", "#FFDF51", "#46DBDF", "#FF8F46", "#42BAB7", "#DB0000")
+````
+
+*****
+# Exploratory Data Analysis
+
+Let's analyze who the strongest pokémon is. One way to choose the strongest pokémon is to rank them according to the sum of their stats. This is already existing in the total column.
+
+``` {r table1}
+datatable(pokedex[order(-pokedex$Total),c("Name", stat_name, "Catch_Rate")])
+```
+
+The above table shows that 11 pokémon are tired for second place. Leaving Arceus as the strongest pokémon. Using the Total stats may not be as meaningful or helpful in choosing only ONE pokémon for battles and raids.
+
+Alternatively, the catch rate could also be a good indicator of strength. Stronger pokémon would be generally harder to catch.
+
+``` {r table2}
+datatable(pokedex[order(-pokedex$Catch_Rate, -pokedex$Total),c("Name", stat_name, "Catch_Rate")])
+```
+
+
+Using the z-score could be an effective approach in determining the strongest pokémon. The z-score gives you an idea of how far from the mean a data point is.
+
+Creating new tables with relevant stats columns for calculation.
+Summing all values into a new "total" column naming it Strength. Strength will help choose the best pokémon.
+
+````{r zscore}
+# Using Lapply function to calculate Z-score for stats variables (including catch rate)
+z_stats = as.data.frame(lapply(pokedex[,c(6:11, 22)], function(x) (x-mean(x))/sd(x)))
+# Summing all values into a new "total" column naming it Strength
+z_stats$Strength <- rowSums(z_stats)
+z_stats <- cbind(pokedex[,c(1:2,13)],z_stats)
+
+head(arrange(z_stats,desc(Strength)), n = 3)
+datatable(z_stats[order(-z_stats$Strength),])
+````
+
+Arceus seems like the obvious choice but its catch rate is 3 which means it is difficult to catch. Afterall, he is known as the god pokémon.
+Another strong non-legendary pokémon is Slaking.
+
+
+## Distribution of Stats Variables
+```{r chart2}
+temp <- pokedex %>% 
+  gather(key = Number, value = value, Total:Speed) %>% 
+  mutate(key = as.factor(Number))
+
+levels(temp$key) <- sort(stat_name)
+temp$key <- factor(temp$key, levels = stat_name)
+
+p1 <- temp %>% 
+  filter(key == 'Total') %>% 
+  ggplot(aes(value)) + 
+  geom_histogram(color = theme_colors[2], fill = theme_colors[4]) + 
+  labs(x = NULL, y = NULL, 
+       title = "Summary of Distribution", 
+       subtitle = "Total stat distribution is the only bimodal distribution.") + 
+  facet_wrap(~ key)
+
+p2 <- temp %>% 
+  filter(key != 'Total') %>% 
+  ggplot(aes(value)) + 
+  geom_histogram(color = theme_colors[2], fill = theme_colors[4]) + 
+  labs(x = NULL, y = NULL) + 
+  facet_wrap(~ key)
+
+grid.arrange(p1, p2, layout_matrix = matrix(c(1, 1, 2, 2, 2)))
+```
+
+## Understanding Legendary Pokemon
+
+Population of Legendary Pokemon
+```{r chart1}
+pie <- pokedex %>%
+  group_by(isLegendary) %>%
+  summarise(Pokemon = n_distinct(Number))
+
+labels <- c("Not Legendary", "Legendary")
+
+plot_ly(pie, labels = labels, 
+        values = ~ Pokemon, 
+        type = 'pie', 
+        textinfo='percent', 
+        title ='Population for Legendary vs Non-Legendary Pokemon',
+        showlegend = T)
+```
+
+
+Stats of Legendary vs Non-Legendary Pokemon
+```{r fig.height = 7.5}
+p3 <- temp %>% 
+  filter(key == 'Total') %>% 
+  ggplot(aes(value, fill = isLegendary, color = isLegendary)) + 
+  geom_density(alpha = 0.75) + 
+  scale_fill_manual(values = theme_colors[1:2]) + 
+  scale_color_manual(values = theme_colors[1:2]) + 
+  labs(x = NULL, y = NULL, 
+       title = 'Non-Legendary Pokemons Have Lower Stats \nThan Legendary Pokemons', 
+       subtitle = 'There are few non-legendary pokemons who hae higher stats than legendary pokemon') + 
+  facet_wrap(~ key)
+
+p4 <- temp %>% 
+  filter(key != 'Total') %>% 
+  ggplot(aes(value, fill = isLegendary, color = isLegendary)) + 
+  geom_density(alpha = 0.75) + 
+  scale_fill_manual(values = theme_colors[1:2]) + 
+  scale_color_manual(values = theme_colors[1:2]) + 
+  guides(color = F, fill = F) + 
+  labs(x = NULL, y = NULL) + 
+  facet_wrap(~ key)
+
+grid.arrange(p3, p4, layout_matrix = matrix(c(1, 1, 2, 2, 2)))
+```
+
+Relationship between Defense and Attack Stats
+```{r chart4}
+pokedex %>% 
+  ggplot(aes(Attack, Defense,  color = isLegendary, fill = isLegendary)) + 
+  geom_point(colors= theme_colors[5:6], size = 5) + 
+  coord_flip() + 
+  labs(x = 'Special Attack', y = 'Special Defense', 
+       title = 'Relationship between Special Defense and Special Attack Stats', 
+       subtitle = 'Legendary Pokemon have higher Special Defense stats than regular Defense stats')
+```
+
+Relationship between Defense and Attack Stats
+```{r chart5}
+
+pokedex %>% 
+  ggplot(aes(Sp_Atk, Sp_Def ,  color = isLegendary, fill = isLegendary)) + 
+  geom_point(colors= theme_colors[5:6], size = 5) + 
+  coord_flip() + 
+  labs(x = 'Attack', y = 'Defense', 
+       title = 'Relationship between Defense and Attack Stats', 
+       subtitle = 'Legendary Pokemon have higher Defense and Attack stats')
+```
+
+Relationship between Height and Weight Stats
+```{r chart6}
+
+pokedex %>% 
+  ggplot(aes(Height_m, Weight_kg, color = isLegendary, fill = isLegendary)) + 
+  geom_point(colors= theme_colors[5:6], size = 5) + 
+  coord_flip() + 
+  labs(x = 'Height', y = 'Weight', 
+       title = 'Relationship between Height and Weight Stats', 
+       subtitle = 'Legendary Pokemon are heavier and taller')
+```
+
+## Variables Correlation
+```{r correlation}
+corr <- round(cor(pokedex[,c(stat_name)]), 1)
+ggcorrplot(corr, method = 'circle')
+```
+
+Defense and Speed have the lowest correlation.
+
+*****
+# Model Algorithms
+
+Trying to predict whether a pokémon is legendary or not is a classification problem. The Top 3 models for this would be <br/>
+1. Logistic Regression <br/>
+	Pros: Simplest algorithm for classification and easier to implement <br/>
+	Cons: Assumes a linear relationship between dependent and independent variables; Sensitive to outliers <br/>
+	
+2. Decision Tree <br/>
+	Pros: Does assume normal distributed data; less effort for data prep <br/>
+	Cons: Prone to overfitting <br/>
+	
+3. Random Forest <br/>
+	Pros: Does great with prediction (since Random Forest is a collection of Decision Trees); Sophisticated output with variable importance; Provides higher accuracy through cross validation <br/>
+	Cons: Unlike Decision Trees, Random Forest is a black box mode <br/>
+
+I will be building a Random Forest model since it is the most robust of the three models.
+
+*****
+# Feature Engineering
+
+## Data Summary
+
+After importing the data (aka the pokédex), I noticed some blank values for Type 2 and Egg Group 2. I replaced the blanks with a "None" category.
+```{r import}
+# Select the required columns. Convert required columns to correct data type
+
+pokedex <- subset(pokedex, select = -Catch_Rate) 
+pokedex$isLegendary <- as.factor(recode(pokedex$isLegendary, True = 1, False = 0))
+pokedex$Generation <- as.factor(pokedex$Generation)
+
+levels(pokedex$Type_2)[match("",levels(pokedex$Type_2))] <- "None"
+levels(pokedex$Egg_Group_2)[match("",levels(pokedex$Egg_Group_2))] <- "None"
+
+str(pokedex)
+```
+
+Partition pokédex into test and train pokédexes. Using 70/30 split and random startified sampling. 
+
+```{r data partition}
+set.seed(355)
+split <- createDataPartition(pokedex$isLegendary, p = 0.7, list = FALSE)
+pokedex_train <- pokedex[split,]
+pokedex_test <- pokedex[-split,]
+```
+
+## Data Imputation
+
+From the pokédex, NA values are only present in the pr_male column with 77 missing values. There are multiple ways to handle missing values:
+1. Delete rows with NA values.
+  This can easily be done if there are a lot of records which is not the case here.
+2. Delete the variable.
+  This might be a significant feature for prediction.
+3. Impute missing values with mean/median/mode of the column.
+  Simple and basic technique.
+4.Predict the missing values using kNN or bagImpute.
+
+Another thing to consider is that the pr_male is the probability of a pokémon being male, with 1-pr_male being the probability of a pokémon being female. In the case of genderless pokémons such as Magnetron or Mewtwo, the value is neither, putting them in a third category.
+
+```{r missing values}
+colSums(is.na(pokedex))
+```
+
+For the sake of simplicity and time, I'll impute the missing values with the kNN prediction.
+```{r knn preprocessing}
+set.seed(355)
+preproc <- preProcess(pokedex_train, method=c("knnImpute"))
+preproc
+```
+
+Using this preproc model to predict missing values
+```{r knn impute}
+set.seed(355)
+newpokedex_train <- predict(preproc, newdata=pokedex_train)
+
+# Check for any NA values in the data frame
+anyNA(newpokedex_train)
+head(newpokedex_train)
+```
+
+## One-Hot Encoding
+
+Applying One-hot encoding to transform categorical variables to transform to category columns with numerical values. Saving the pokémon number,name and target variables to x. These variables will be attached to the data frame after the encoding.
+```{r one hot enconding pt1}
+x <- c("Number","Name","isLegendary")
+saved_columns_train <- pokedex_train[,(names(pokedex_train) %in% x)]
+newpokedex_train <- newpokedex_train[,!(names(pokedex_train) %in% x)]
+
+dummy <- dummyVars(~., data = newpokedex_train)
+newpokedex_train <- data.frame(predict(dummy, newdata = newpokedex_train))
+```
+
+## Normalize Predictors
+
+Normalizing the training pokédex for the variables to be between 0 and 1. 
+```{r one hot enconding pt2}
+rangeModel <- preProcess(newpokedex_train, method = c("range"))
+newpokedex_train <- predict(rangeModel, newdata = newpokedex_train)
+```
+
+```{r one hot enconding pt3}
+pokedex_train <- cbind(saved_columns_train,newpokedex_train)
+```
+
+## Transforming Pokédex Test data
+
+Tranforming test data using the same three procedures: 
+  1. Imputation of missing values using the "kNN" model object.
+  2. One-hot encoding using the "dummyModel" object.
+  3. Normalization using the "rangeModel" object.
+
+```{r data transformation for pokedex_test}
+newpokedex_test <- predict(preproc, newdata=pokedex_test)
+
+saved_columns_test <- pokedex_test[,(names(pokedex_test) %in% x)]
+newpokedex_test <- newpokedex_test[,!(names(pokedex_test) %in% x)]
+
+newpokedex_test <- data.frame(predict(dummy, newdata = newpokedex_test))
+#newpokedex_test <- predict(rangeModel, newdata = newpokedex_test)
+
+pokedex_test <- cbind(saved_columns_test,newpokedex_test)
+```
+
+## Class Imbalance
+
+One thing that was observed in the Data Exploration section was that the predictor class has a class imbalance. Training on such a training data can cause bias and overfitting. There are two solutions to class imbalance:
+- Undersample the majority class data (remove some normal pokémon records from train data)
+- Oversample the minority data (synthesize additional legendary pokémon records using existing example data from train data)
+
+I chose to oversample the pokedex_train data.
+
+```{r oversample}
+set.seed(2131)
+pokedex_train_oversampled <- upSample(x = pokedex_train[,-3],y= pokedex_train$isLegendary, yname = "isLegendary")
+pokedex_train_oversampled <- as.data.frame(pokedex_train_oversampled)
+pokedex_train_oversampled <- pokedex_train_oversampled[, c(1:2,113,3:112)]
+```
+
+The dataset now has a 1:1 balance for predictor variable isLegendary.
+
+rm(dummy)
+rm(newpokedex_train)
+rm(newpokedex_test)
+rm(preproc)
+rm(rangeModel)
+rm(saved_columns_train)
+rm(saved_columns_test)
+rm(split)
+
+# Model Building and Prediction
+## Model Building     
+
+```{r random forest}
+start_time = Sys.time()
+set.seed(355)
+model_rf <- train(isLegendary ~., 
+                  data = na.omit(pokedex_train_oversampled), 
+                  method = "rf",
+                  importance = TRUE,
+                  verbose = TRUE)
+model_rf
+end_time = Sys.time()
+end_time - start_time
+```
+
+## Model Assessment
+
+```{r predict}
+predict_rf <- predict(model_rf,pokedex_test)
+
+# Test Accuracy
+predict_rf <- as.factor(predict_rf)
+print(confusionMatrix(predict_rf,pokedex_test$isLegendary))
+```
+
+```{r model assessment}
+# Create prediction and performance objects for the random forest
+prob_rf <- predict(model_rf, pokedex_test, type = "prob")
+pred_rf <- prediction(prob_rf[,2], pokedex_test$isLegendary)
+perf_rf <- performance(pred_rf, "tpr", "fpr")
+
+# Plot ROC curves
+plot(perf_rf, col = "red", main = "ROC curve")
+```
+
+## Variable Importance
+
+Note that a random forest returns two measures of variable importance:
+  - MeanDecreaseAccuracy: how much the model accuracy suffers if you leave out a particular variable
+  - MeanDecreaseGini: the degree to which a variable improves the probability of an observation being classified one way or another (i.e. 'node purity').
+  
+```{r var importance}
+var_imp <- varImp(model_rf)
+var_imp
+
+# Top 20 important variables 
+imp_var <- c("Number","Name", "isLegendary","Egg_Group_1.Undiscovered", "Total", "Sp_Atk", "hasGender.False", "Attack", "HP", "Sp_Def", "Number", "hasGender.True", "Speed", "Defense", "Weight_kg", "Height_m", "Pr_Male", "Egg_Group_2.None","Egg_Group_1.Mineral","Egg_Group_1.Mineral","Body_Style.two_wings","Type_1.Dragon","Type_1.Bug")
+
+```
+
+## Basic Parameter Tuning
+
+```{r tune}
+fitControl <- trainControl(## 5-fold CV repeat 5 times
+                           method = "repeatedcv",
+                           number = 5,
+                           repeats = 5)
+```
+
+## Refitting Model
+
+Subseting train and test pokédex to have top 20 important variables.
+```{r subset new vars}
+pokedex_train_v2 <- pokedex_train_oversampled[,c(imp_var)]
+pokedex_test_v2 <- pokedex_test[,c(imp_var)]
+```
+
+```{r refit random forest}
+start_time = Sys.time()
+set.seed(355)
+model_rf_v2 <- train(isLegendary ~.,
+                     data = na.omit(pokedex_train_v2),
+                     importance = TRUE,
+                     trControl = fitControl,
+                     verbose = TRUE)
+model_rf
+end_time = Sys.time()
+end_time - start_time
+
+```
+
+## Testing Refitted Model
+```{r new prediction}
+predict_rf_v2 <- predict(model_rf_v2, pokedex_test_v2)
+predict_rf_v2 <- as.factor(predict_rf_v2)
+print(confusionMatrix(predict_rf_v2,pokedex_test_v2$isLe))
+```
+
+# Results and Conclusion
+
+Initially, 113 variables were used for the model. However, the most important variables for the model were the Undiscovered egg group and the total stats points. The model was refitted  with only the top 23 important variables. It was also tuned to do a 5-fold cross-validation repeated 5 times. <br/>
+
+The performance of the Random Forest model is strong, with a 99.53% accuracy. 
+
+*****
+
